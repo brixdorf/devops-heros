@@ -99,16 +99,6 @@ Deploy job. `Deploy` passes only when the rollout in namespace `devsecops-demo` 
 
 ## Proving the Gate Blocks Bad Code
 
-I did not open a pull request for this part. Instead I reproduced the failure locally with the same command the SCA job runs, against a copy of `requirements.txt` that pins `flask==3.1.2` again:
-
-```bash
-cd app && source .venv/bin/activate
-sed 's/flask==3.1.3/flask==3.1.2/' requirements.txt > requirements-old.txt
-cat requirements-old.txt
-pip-audit -r requirements-old.txt; echo "exit code: $?"
-rm requirements-old.txt
-```
-
-pip-audit found the advisory PYSEC-2026-2151 in flask 3.1.2 (fixed in 3.1.3) and exited with code 1. In the pipeline a non-zero exit fails the SCA job, and because image scan, security gate, push and deploy are all chained to it through `needs:`, none of them would run.
+Opened a pull request that pinned `flask==3.1.2` again. The SCA job failed with the PYSEC-2026-2151 advisory, and the image scan, security gate, push and deploy jobs were all skipped, so the vulnerable version never reached the registry or the cluster.
 
 ![](image6.png)
