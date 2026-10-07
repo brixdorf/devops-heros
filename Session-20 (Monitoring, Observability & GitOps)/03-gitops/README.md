@@ -135,7 +135,7 @@ Both do the core job well. Argo CD is often picked when a team wants a visual da
 
 ## Hands-on Demo: Argo CD on Minikube
 
-The app lives in this repo under `03-gitops/manifests/` (a Deployment with 2 replicas and a Service). `application.yaml` tells Argo CD to keep the `gitops-demo` namespace identical to that folder on the `main` branch, with:
+The app lives in this repo under `03-gitops/manifests/` (a Deployment that started with 2 replicas, and a Service). `application.yaml` tells Argo CD to keep the `gitops-demo` namespace identical to that folder on the `main` branch, with:
 - `automated`, so it syncs by itself, with no manual click.
 - `prune: true`, so files deleted from Git are deleted from the cluster.
 - `selfHeal: true`, so manual changes in the cluster get reverted to match Git.
@@ -144,11 +144,12 @@ The app lives in this repo under `03-gitops/manifests/` (a Deployment with 2 rep
 
 ```bash
 kubectl create namespace argocd
-kubectl apply -n argocd --server-side --force-conflicts -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+kubectl apply -n argocd --server-side --force-conflicts -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml | tail -5
+kubectl wait --for=condition=Ready pods --all -n argocd --timeout=420s
 kubectl get pods -n argocd
 ```
 
-`--server-side` is needed because some Argo CD CRDs are too large for a normal client-side apply.
+`--server-side` is needed because some Argo CD CRDs are too large for a normal client-side apply. The apply prints one line per object, so I only kept the last 5. All 7 Argo CD pods were `1/1 Running` after 78 seconds.
 
 ![](../image7.png)
 
@@ -156,6 +157,7 @@ kubectl get pods -n argocd
 
 ```bash
 kubectl apply -f application.yaml
+kubectl wait --for=jsonpath='{.status.health.status}'=Healthy application/gitops-web -n argocd --timeout=240s
 kubectl get applications -n argocd
 kubectl get all -n gitops-demo
 ```
@@ -171,22 +173,26 @@ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.pas
 kubectl port-forward svc/argocd-server -n argocd 8080:443
 ```
 
-Logged in at `https://localhost:8080` as `admin` (the browser warns about the self-signed certificate). The app tree shows Deployment, ReplicaSet, Pods and Service.
+Logged in at `https://localhost:8080` as `admin` (the browser warns about the self-signed certificate). This is Argo CD v3.5.4. The app is `Healthy` and `Synced to main`, with my last commit shown as the synced revision, and the tree shows the Service, the Deployment, its ReplicaSet and the 2 Pods.
 
 ![](../image9.png)
 
 ### Change Git, watch the cluster follow
 
-Changed `replicas: 2` to `replicas: 3` in `manifests/deployment.yaml`, then committed and pushed:
+Changed `replicas: 2` to `replicas: 3` in `manifests/deployment.yaml`, then committed and pushed (run from the repo root):
 
 ```bash
+sed -i 's/replicas: 2/replicas: 3/' "Session-20 (Monitoring, Observability & GitOps)/03-gitops/manifests/deployment.yaml"
 git add "Session-20 (Monitoring, Observability & GitOps)/03-gitops/manifests/deployment.yaml"
 git commit -m "gitops demo: scale to 3"
-git push
+git.exe push origin main
+date +%T
 kubectl get pods -n gitops-demo -w
+date +%T
+kubectl get applications -n argocd
 ```
 
-Argo CD checks Git every 3 minutes by default (Refresh in the UI checks right away). A third pod appeared without any `kubectl apply` from me. Git is the only place the change was made.
+Argo CD checks Git every 3 minutes by default (Refresh in the UI checks right away). I did not click Refresh and just waited. The push finished at 19:10:22, and the third pod appeared about 2 minutes and 20 seconds later, without any `kubectl apply` from me. Git is the only place the change was made. (`git.exe` is the Windows Git, which is where my GitHub login is saved. It works on the same repo folder from WSL.)
 
 ![](../image10.png)
 
@@ -195,9 +201,11 @@ Argo CD checks Git every 3 minutes by default (Refresh in the UI checks right aw
 ```bash
 kubectl scale deployment gitops-web -n gitops-demo --replicas=1
 kubectl get pods -n gitops-demo -w
+kubectl get deployment gitops-web -n gitops-demo
+kubectl get applications -n argocd
 ```
 
-The manual change made the cluster drift away from Git. Argo CD noticed and scaled it back to 3 within seconds. The application history in the UI shows the sync it did.
+The manual change made the cluster drift away from Git. Two pods started terminating, and within about a second Argo CD had put the replica count back, so two new pods (`2fnp9` and `fhsx7`) were created to replace them. The deployment ended at `3/3` again and the application stayed `Synced` and `Healthy`.
 
 ![](../image11.png)
 
