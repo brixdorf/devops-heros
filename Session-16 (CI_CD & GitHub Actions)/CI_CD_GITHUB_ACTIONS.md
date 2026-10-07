@@ -2,47 +2,31 @@
 
 ## Demo Project: Tasks API with a Full CI/CD Pipeline
 
-A small Flask REST API (`app/`) that stores a to-do list in memory, with unit tests, a Dockerfile, Kubernetes manifests (`k8s/`), and a GitHub Actions pipeline that tests it, builds it, publishes it and deploys it.
-
-```text
-Session-16 (CI_CD & GitHub Actions)/
-├── app/
-│   ├── app.py                 Flask API: /, /health, /tasks
-│   ├── tests/test_app.py      4 pytest unit tests
-│   ├── requirements.txt       runtime dependencies
-│   ├── requirements-dev.txt   adds pytest and flake8
-│   └── Dockerfile             python:3.12-slim, gunicorn, non-root user
-└── k8s/
-    ├── deployment.yaml        2 replicas, probes, secret as env var
-    └── service.yaml
-.github/workflows/session-16-cicd.yml   (at the repo root)
-```
-
-The workflow file has to live in `.github/workflows/` at the root of the repository, because that is the only place GitHub looks for workflows. The `paths` filter makes it run only when something in this session's folder changes.
+A small Flask to-do API in `app/` with unit tests and a Dockerfile, Kubernetes manifests in `k8s/`, and a GitHub Actions workflow in `.github/workflows/session-16-cicd.yml` that tests, builds, publishes and deploys it.
 
 ## Concepts, mapped to this project
 
-**CI vs CD.** CI (Continuous Integration) means every push is automatically built and tested, so broken code is caught within minutes. CD (Continuous Delivery or Deployment) takes the build that passed CI and ships it to an environment automatically. Here the `test` and `build` jobs are CI, and the `deploy` job is CD.
+**CI vs CD.** CI builds and tests every push, and CD ships the build that passed. Here `test` and `build` are CI and `deploy` is CD.
 
-**CI/CD pipeline.** The whole chain from a push to a running deployment: lint, unit test, Docker build, smoke test, push to registry, deploy, verify. If any step fails, everything after it is skipped.
+**CI/CD pipeline.** The chain from a push to a running deployment: lint, test, build, smoke test, push image, deploy, verify.
 
-**GitHub Actions.** GitHub's built-in automation service that runs these pipelines on events like a push or a pull request.
+**GitHub Actions.** GitHub's built-in service that runs pipelines on events like a push or a pull request.
 
-**Workflow.** One YAML file in `.github/workflows/`. It declares the triggers (`on: push`, `pull_request`, `workflow_dispatch` for a manual run button) and the jobs.
+**Workflow.** One YAML file in `.github/workflows/` that declares the triggers and the jobs.
 
-**Jobs.** Groups of steps that each run on a fresh machine. Jobs run in parallel unless `needs:` chains them. Here it is `test`, then `build`, then `deploy`.
+**Jobs.** Groups of steps on a fresh machine. They run in parallel unless chained with `needs:`.
 
-**Steps.** The individual commands inside a job. A step either runs a shell command (`run:`) or uses a reusable action (`uses: actions/checkout@v7`).
+**Steps.** Single commands (`run:`) or reusable actions (`uses:`) inside a job.
 
-**Runners.** The machines that execute jobs. `runs-on: ubuntu-latest` uses a fresh GitHub-hosted Ubuntu VM for every job, which is thrown away afterwards.
+**Runners.** The machines that run jobs. `ubuntu-latest` is a fresh GitHub-hosted VM each time.
 
-**Secrets.** Encrypted values stored in the repo settings and injected at runtime, always masked as `***` in logs. The pipeline uses `GITHUB_TOKEN` (created automatically for every run) to log in to GitHub Container Registry, and an optional repository secret `APP_GREETING` (with a default when it is not set) that becomes a Kubernetes Secret and then an env variable inside the app.
+**Secrets.** Encrypted values injected at runtime and masked in logs. This pipeline uses `GITHUB_TOKEN` and an optional `APP_GREETING`.
 
-**Artifacts.** Files saved from a job so they can be downloaded later or used by another job. This pipeline uploads `test-results.xml` (the test report) and `image.tar` (the built image), which the deploy job downloads so it deploys exactly the image that passed CI.
+**Artifacts.** Files saved from a job. Here that is the test report and the built image, which the deploy job downloads.
 
-**Build and test.** `flake8` checks code style, `pytest` runs the unit tests, and `docker build` produces the image. The smoke test runs the container and calls `/health` before anything gets published.
+**Build and test.** flake8 for style, pytest for unit tests, `docker build` for the image, and a `/health` smoke test.
 
-**Pipeline execution.** Each push to `main` that touches this folder runs the 3 jobs in order. The CD job creates a temporary Kubernetes cluster inside the runner with kind (Kubernetes in Docker), loads the image, applies the manifests, waits for the rollout and calls the API through `kubectl port-forward`.
+**Pipeline execution.** A push to `main` runs the 3 jobs in order, and the deploy job uses a temporary kind cluster inside the runner.
 
 ## Running it locally first
 
@@ -59,30 +43,28 @@ curl -s localhost:5000/health
 docker stop tasks
 ```
 
-flake8 printed nothing, which means no style problems. All 4 tests passed, the image built (the layers show `CACHED` because I had already built it once), and the container answered `/health` with `{"status":"ok"}`.
+Lint clean, 4 tests passed, image built, and `/health` answered `ok`.
 
 ![](image1.png)
 
 ## Pipeline Execution on GitHub
 
-Pushed to `main`, and the push started the workflow on its own. I did not add the optional repository secret `APP_GREETING`, so the deploy job used the default greeting built into the workflow (`Hello from GitHub Actions`).
-
-All 3 jobs passed in 2m 36s, chained by `needs:`.
+Pushed to `main`, and all 3 jobs passed in 2m 36s.
 
 ![](image2.png)
 
-The `Lint and unit test` job, with every step green including `Lint with flake8` and `Run unit tests`. `Run unit tests` step output from the `Lint and unit test job`, with all 4 tests passing.
+`Run unit tests` step output, with all 4 tests passing.
 
 ![](image3.png)
 
-`docker-image` (47.4 MB) and `test-results` artifacts attached to the run.
+The `docker-image` and `test-results` artifacts on the run.
 
 ![](image4.png)
 
-`Verify the deployment` step output from the deploy job. The rollout finished on the kind cluster, and curl got answers from `/` and `/health`, including the default greeting.
+`Verify the deployment` step: curl got answers from `/` and `/health` on the kind cluster.
 
 ![](image5.png)
 
-The published image in GitHub Container Registry, tagged `latest` and `2a8bf91` (the commit that was built).
+The image in GitHub Container Registry, tagged `latest` and `2a8bf91`.
 
 ![](image6.png)

@@ -1,19 +1,10 @@
 # Mini Project: Self-Healing Website with Persistent Storage
 
-This combines all three topics of the session in one small app:
-- **Storage:** the website files live on a PVC (`pvc.yaml`) that Minikube's `standard` StorageClass provisions automatically.
-- **Probes:** nginx has a startup, readiness and liveness probe.
-- **HPA:** `hpa.yaml` scales the Deployment between 1 and 4 pods at 50% CPU.
-
-An init container (a container that runs to completion before the main one starts) writes `index.html` and `healthz.html` onto the volume, but only if they are not there already.
+An nginx site whose files live on a PVC, with three probes and an HPA (1 to 4 pods at 50% CPU). An init container writes `index.html` and `healthz.html` only if they are missing.
 
 ## The three probes
 
-| Probe | Checks | What happens on failure |
-|---|---|---|
-| startupProbe | `GET /healthz.html` every 2s, up to 15 tries | Other probes wait until it passes. If it never passes, the container is restarted |
-| readinessProbe | `GET /` every 5s | Pod is removed from the Service endpoints, so it gets no traffic, but it is not restarted |
-| livenessProbe | `GET /healthz.html` every 5s, 3 failures allowed | Container is killed and restarted |
+Startup waits for `/healthz.html` before the other probes begin. Readiness on `/` takes the pod out of the Service when it fails. Liveness on `/healthz.html` restarts the container after 3 failures.
 
 ## Deploy
 
@@ -27,7 +18,7 @@ curl -sS -m 5 http://$(minikube ip):30013
 minikube ssh -- curl -s http://localhost:30013
 ```
 
-The PVC went to `Bound` and a PV appeared for it automatically. The pod showed `1/1 Running`. The curl to the node IP timed out, because with the docker driver on WSL the node IP is not reachable from my shell, so I curled the NodePort from inside the node instead and got the page back.
+PVC bound, pod running, and the page answered on the NodePort from inside the node (the node IP is not reachable from WSL).
 
 ![](../image12.png)
 
@@ -41,11 +32,13 @@ kubectl get pods -l app=site
 kubectl exec deploy/site -- cat /usr/share/nginx/html/index.html
 ```
 
-The replacement pod (new name, 0 restarts) still had the edited page. The init container saw that `index.html` already existed and left it alone.
+The replacement pod still had the edited page.
 
 ![](../image13.png)
 
 ## Prove liveness self-healing
+
+A restart alone could not fix this, because the missing file was on the persistent volume.
 
 ```bash
 kubectl exec deploy/site -- rm /usr/share/nginx/html/healthz.html
@@ -56,11 +49,9 @@ sleep 10
 kubectl get pods -l app=site
 ```
 
-After 3 failed liveness checks (about 15 seconds) the kubelet killed the container and RESTARTS went from 0 to 1. Only the container restarts, not the pod, so the init container does not run again and the health file stays missing. Because of that the startup probe then failed too, and about 30 seconds later the container was restarted a second time. I recreated the health file by hand to stop the loop, and the pod went back to `1/1 Running` with 2 restarts.
+Removing the health file caused 2 restarts, and recreating it by hand brought the pod back to `1/1`.
 
 ![](../image14.png)
-
-That was a useful lesson in itself. A liveness probe only helps when restarting the container actually fixes the problem. Here the broken state was on the persistent volume, so restarting alone could not fix it.
 
 ## Scaling
 
@@ -71,6 +62,6 @@ kubectl get pods -l app=site
 kubectl delete pod site-load
 ```
 
-The CPU request is only 50m, so the load pushed utilization to 112% and HPA scaled from 1 to 3 pods. With three pods sharing the requests, CPU settled at around 50%, right on the target, so it stopped there and never needed the fourth pod.
+Load pushed CPU to 112% and HPA scaled from 1 to 3 pods, where it settled near 50%.
 
 ![](../image15.png)

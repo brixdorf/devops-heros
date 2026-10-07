@@ -2,67 +2,32 @@
 
 ## Demo Project: Secure API Pipeline
 
-DevSecOps means building security checks into the same automated pipeline as build and test, so a security problem stops a release just like a failing test does, instead of being found by a separate team weeks later. This is often called "shifting security left" (earlier in the timeline).
-
-The app is a small Flask API (`app/`). The pipeline is `.github/workflows/session-17-devsecops.yml` at the repo root.
-
-```text
-Session-17 (Complete CI_CD & DevSecOps)/
-├── app/
-│   ├── app.py, tests/            Flask API and pytest unit tests
-│   ├── requirements.txt          pinned runtime dependencies
-│   ├── requirements-dev.txt      adds pytest, flake8, bandit, pip-audit
-│   └── Dockerfile                multi-stage, no pip at runtime, non-root user 10001
-├── k8s/
-│   ├── namespace.yaml
-│   ├── deployment.yaml           hardened securityContext
-│   └── service.yaml
-└── .gitleaks.toml                secret scan configuration
-```
+DevSecOps puts security checks into the same pipeline as build and test, so a security problem stops a release the way a failing test does. The app is a small Flask API in `app/`, and the pipeline is `.github/workflows/session-17-devsecops.yml`.
 
 ## Pipeline Flow
+
+Tests run first, then SAST, SCA and secret scanning in parallel, then the image build and scan. Push and deploy only run after the security gate.
 
 ```text
 Code -> Build -> Unit Test -> SAST -> SCA -> Secret Scan -> Docker Build
      -> Container Image Scan -> Security Gate -> Push Image -> Deploy to Kubernetes
 ```
 
-| Stage | Job | Tool | Fails the pipeline when |
-|---|---|---|---|
-| Build + unit test | build-test | flake8, pytest | lint error or failing test |
-| SAST | sast | Bandit | medium or high severity issue in our code |
-| SCA | sca | pip-audit | any dependency has a known vulnerability |
-| Secret scanning | secret-scan | Gitleaks | a key, token or password is found |
-| Docker build + image scan | image-scan | docker, Trivy | fixable HIGH or CRITICAL CVE in the image |
-| Security gate | security-gate | (needs all above) | any earlier job failed |
-| Container registry | push-image | GHCR | push fails |
-| Kubernetes deployment | deploy | kind, kubectl | rollout or health check fails |
-
-SAST, SCA and secret scanning run in parallel after the tests, which keeps the pipeline fast.
-
 ## Security Tools Explained
 
-**SAST (Static Application Security Testing)** reads source code without running it, looking for dangerous patterns. Bandit is a SAST tool for Python. It flagged a real issue in my first draft: `app.run(host="0.0.0.0")` (B104, binding to all network interfaces). I changed the local dev server to `127.0.0.1`. Inside the container gunicorn still binds to `0.0.0.0`, because that is required for the container to be reachable at all.
+**SAST (Bandit).** Reads our own source code for insecure patterns. Fails on medium or high severity.
 
-**SCA (Software Composition Analysis)** checks third-party libraries against vulnerability databases. pip-audit failed my first draft too, because `flask==3.1.2` has a published advisory (PYSEC-2026-2151) fixed in `3.1.3`. Bumping the pin fixed it.
+**SCA (pip-audit).** Checks third-party dependencies against vulnerability databases. Fails on any known vulnerability.
 
-**Secret scanning** looks for credentials committed by mistake (AWS keys, GitHub tokens, private keys). Gitleaks scans this session folder with its built-in rules.
+**Secret scanning (Gitleaks).** Looks for committed keys, tokens and passwords.
 
-**Container image scanning** checks everything inside the final image: OS packages from Debian and every Python package. Trivy first reported HIGH CVEs in libraries that pip bundles inside itself (`urllib3`, `msgpack`), even though the app never uses pip at runtime. The fix was a multi-stage Dockerfile: dependencies are installed in a builder stage, and pip is removed from the final image entirely. `ignore-unfixed: true` means CVEs with no fix available yet do not block the build, because there would be nothing to upgrade to.
+**Container image scanning (Trivy).** Scans the OS and Python packages in the final image. Fails on fixable HIGH or CRITICAL CVEs.
 
-**Security gate** is the single job that every scan feeds into. Push and deploy depend on it, so nothing reaches the registry or the cluster unless every check passed. It also writes a summary table to the run page.
-
-**Supply chain hardening.** The Trivy action is pinned to a full commit SHA instead of a tag, because tags can be moved to point at different code.
+**Security gate.** One job that needs every scan to pass. Push and deploy depend on it.
 
 ## Kubernetes Hardening
 
-`deployment.yaml` runs the pod with:
-- `runAsNonRoot: true` and `runAsUser: 10001`, so the container can never run as root.
-- `readOnlyRootFilesystem: true`, with an emptyDir only at `/tmp` for gunicorn.
-- `allowPrivilegeEscalation: false` and all Linux capabilities dropped.
-- `seccompProfile: RuntimeDefault`, which blocks unusual system calls.
-- `automountServiceAccountToken: false`, because the app never talks to the Kubernetes API.
-- CPU and memory requests and limits, plus readiness and liveness probes on `/health`.
+The pod runs as non-root user 10001 with a read-only root filesystem, no privilege escalation, all capabilities dropped, the default seccomp profile, no service account token, and resource limits with probes.
 
 ## Local Checks Before Pushing
 
@@ -75,30 +40,30 @@ bandit -r . -x ./tests,./.venv --severity-level medium
 pip-audit -r requirements.txt
 ```
 
-flake8 was silent, all 4 tests passed, Bandit reported `No issues identified` over 27 lines of code, and pip-audit printed `No known vulnerabilities found`. Locally I had to add `./.venv` to Bandit's exclude list, otherwise it also scans every library inside the virtual environment. The pipeline does not need that because it has no `.venv` folder.
+Lint and tests passed, Bandit found no issues, and pip-audit found no known vulnerabilities.
 
 ![](image1.png)
 
 ## Successful Pipeline Execution
 
-Pushed to `main` and the workflow ran on its own. All 8 jobs were green in 3m 44s, with SAST, SCA and the secret scan running in parallel after the tests.
+All 8 jobs green in 3m 44s.
 
 ![](image2.png)
 
-Security gate summary on the run page. The gate only runs when every earlier job passed, and it lists each check as passed.
+Security gate summary, with every check passed.
 
 ![](image3.png)
 
-Trivy output from the `Scan image (fails on fixable HIGH or CRITICAL)` step. It found no fixable HIGH or CRITICAL vulnerabilities, so the step passed.
+Trivy found no fixable HIGH or CRITICAL vulnerabilities.
 
 ![](image4.png)
 
-`Verify` step output from the deploy job. The rollout in namespace `devsecops-demo` finished, and curl got answers from `/` and `/health`.
+`Verify` step: the rollout finished and curl got answers from `/` and `/health`.
 
 ![](image5.png)
 
 ## Proving the Gate Blocks Bad Code
 
-Opened a pull request that pinned `flask==3.1.2` again. The SCA job failed with the PYSEC-2026-2151 advisory, and the image scan, security gate, push and deploy jobs were all skipped, so the vulnerable version never reached the registry or the cluster.
+A pull request pinning `flask==3.1.2` failed the SCA job, and the later jobs were skipped.
 
 ![](image6.png)

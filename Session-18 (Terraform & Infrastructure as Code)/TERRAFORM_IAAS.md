@@ -2,7 +2,7 @@
 
 ## Task 1: Terraform S3 Demo
 
-Built a Terraform project that creates a private, encrypted, versioned S3 bucket in `ap-south-1` (Mumbai), and ran the whole workflow on it: `init`, `fmt`, `validate`, `plan`, `apply`, `show`, `output`, `destroy`.
+A Terraform project that creates a private, encrypted, versioned S3 bucket in `ap-south-1`, run through init, fmt, validate, plan, apply, show, output and destroy. Commands and screenshots are in [terraform-s3-demo/README.md](terraform-s3-demo/README.md).
 
 ```text
 terraform-s3-demo/
@@ -14,16 +14,6 @@ terraform-s3-demo/
 └── README.md
 ```
 
-Step by step commands, explanations and screenshots are in [terraform-s3-demo/README.md](terraform-s3-demo/README.md).
-
 ## Task 2: AWS Services Research
 
-One README per service:
-
-| Folder | Service | Category |
-|---|---|---|
-| [01-iam](aws-services/01-iam/README.md) | IAM | Governance |
-| [02-ec2](aws-services/02-ec2/README.md) | EC2 | Compute |
-| [03-s3](aws-services/03-s3/README.md) | S3 | Storage |
-| [04-vpc](aws-services/04-vpc/README.md) | VPC | Networking |
-| [05-dynamodb-rds](aws-services/05-dynamodb-rds/README.md) | DynamoDB and RDS | Databases |
+One README per service: [IAM](aws-services/01-iam/README.md), [EC2](aws-services/02-ec2/README.md), [S3](aws-services/03-s3/README.md), [VPC](aws-services/04-vpc/README.md), [DynamoDB and RDS](aws-services/05-dynamodb-rds/README.md).

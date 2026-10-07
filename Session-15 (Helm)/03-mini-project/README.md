@@ -1,26 +1,10 @@
 # Mini Project: Bookshelf Helm Chart
 
-A Helm chart written by hand (not from `helm create`) for a small static website. nginx serves an HTML page that is generated from values, so every release visibly shows its own version, message and colour.
+A chart written by hand for a static site. nginx serves a page built from values, so each release shows its own version.
 
 ## Chart structure
 
-```text
-bookshelf/
-├── Chart.yaml              chart name, chart version, app version
-├── values.yaml             defaults (release v1)
-├── values-v2.yaml          overrides for release v2
-├── values-v3-broken.yaml   overrides for release v3, with a bad image tag
-└── templates/
-    ├── _helpers.tpl        shared name and label snippets
-    ├── configmap.yaml      index.html built from .Values.site
-    ├── deployment.yaml     nginx mounting the ConfigMap
-    ├── service.yaml        NodePort 30015
-    └── NOTES.txt           printed after install
-```
-
-Two template details worth noting:
-- `deployment.yaml` has a `checksum/html` annotation, a hash of the rendered ConfigMap. A ConfigMap change alone does not restart pods, but a changed annotation does, so a new page always triggers a rolling update.
-- `values-v2.yaml` only contains the keys that change. Helm merges it on top of `values.yaml`.
+`Chart.yaml`, `values.yaml` with `values-v2.yaml` and `values-v3-broken.yaml` as overrides, and templates for a ConfigMap (the page), a Deployment, a Service and NOTES. A checksum annotation on the Deployment restarts the pods when the page changes.
 
 ## Lint and render
 
@@ -29,7 +13,7 @@ helm lint ./bookshelf
 helm template shop ./bookshelf | head -40
 ```
 
-`lint` checks the chart for errors (0 failed, only an INFO that an icon is recommended), and `template` renders the YAML locally without touching the cluster. The rendered ConfigMap already has `Bookshelf v1` in the HTML.
+Lint passed, and the rendered page says `Bookshelf v1`.
 
 ![](../image10.png)
 
@@ -48,7 +32,7 @@ kubectl get pods -l app.kubernetes.io/instance=shop
 minikube ssh -- curl -s http://localhost:30015 | grep h1
 ```
 
-v1 runs 2 pods and the page says `Bookshelf v1`. After the upgrade there are 3 pods and the page says `Bookshelf v2`. The chart's NOTES suggest `minikube service shop-bookshelf --url`, but with the docker driver on WSL that command keeps a tunnel open in the terminal, so I curled the NodePort from inside the node instead. The short `sleep` is there because my first try curled right after the rollout and the NodePort was not answering yet.
+v1 runs 2 pods, and after the upgrade v2 runs 3 pods.
 
 ![](../image11.png)
 
@@ -62,7 +46,7 @@ helm history shop
 minikube ssh -- curl -s http://localhost:30015 | grep h1
 ```
 
-The new pod is stuck in `ImagePullBackOff` because `nginx:1.27-alpine-typo` does not exist. Two old pods are still `Running` and the page still says `Bookshelf v2`, because a rolling update does not remove old pods until new ones are ready. (There are 2 old pods and not 3 because the v3 file does not set `replicaCount`, so it fell back to the default of 2.) Helm still records revision 3 as `deployed`, because without `--wait` it only checks that the YAML was accepted, not that pods became healthy.
+The new pod is stuck in `ImagePullBackOff`, the old pods still serve v2, and Helm still marks revision 3 as `deployed`.
 
 ![](../image12.png)
 
@@ -77,7 +61,7 @@ helm history shop
 minikube ssh -- curl -s http://localhost:30015 | grep h1
 ```
 
-Back to 3 healthy pods and `Bookshelf v2`. History shows revision 4 as `Rollback to 2`.
+Back to 3 healthy pods on v2, with revision 4 as `Rollback to 2`.
 
 ![](../image13.png)
 
