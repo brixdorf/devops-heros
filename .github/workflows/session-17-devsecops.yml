@@ -1,0 +1,196 @@
+name: Session 17 DevSecOps
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Session-17 (Complete CI_CD & DevSecOps)/**"
+      - ".github/workflows/session-17-devsecops.yml"
+  pull_request:
+    paths:
+      - "Session-17 (Complete CI_CD & DevSecOps)/**"
+  workflow_dispatch:
+
+env:
+  SESSION_DIR: "Session-17 (Complete CI_CD & DevSecOps)"
+  APP_DIR: "Session-17 (Complete CI_CD & DevSecOps)/app"
+  K8S_DIR: "Session-17 (Complete CI_CD & DevSecOps)/k8s"
+  IMAGE_NAME: secure-api
+
+permissions:
+  contents: read
+
+jobs:
+  # 1. Build and unit test
+  build-test:
+    name: Build and unit test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: "Session-17 (Complete CI_CD & DevSecOps)/app"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: flake8 .
+      - name: Unit tests
+        run: pytest -v --junitxml=test-results.xml
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: ${{ env.APP_DIR }}/test-results.xml
+
+  # 2. SAST: scan our own source code for insecure patterns
+  sast:
+    name: SAST (Bandit)
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install Bandit
+        run: pip install bandit==1.9.4
+      - name: Run Bandit (fails on medium or high severity)
+        run: bandit -r "$APP_DIR" -x "$APP_DIR/tests" --severity-level medium
+
+  # 3. SCA: check third-party dependencies for known CVEs
+  sca:
+    name: SCA (pip-audit)
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install pip-audit
+        run: pip install pip-audit==2.10.1
+      - name: Audit requirements.txt (fails on any known vulnerability)
+        run: pip-audit -r "$APP_DIR/requirements.txt"
+
+  # 4. Secret scanning: look for committed keys, tokens and passwords
+  secret-scan:
+    name: Secret scan (Gitleaks)
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Gitleaks
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz | tar xz gitleaks
+          sudo mv gitleaks /usr/local/bin/
+      - name: Scan this session folder (fails if a secret is found)
+        run: gitleaks dir "$SESSION_DIR" --config "$SESSION_DIR/.gitleaks.toml" --redact -v
+
+  # 5. Docker build and container image scan
+  image-scan:
+    name: Docker build and image scan (Trivy)
+    needs: [sast, sca, secret-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build image
+        run: |
+          docker build \
+            --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            -t "$IMAGE_NAME:${GITHUB_SHA::7}" "$APP_DIR"
+          echo "IMAGE_REF=$IMAGE_NAME:${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+      - name: Scan image (fails on fixable HIGH or CRITICAL)
+        # Pinned to a full commit SHA (v0.36.0) so a moved tag cannot change what runs
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: ${{ env.IMAGE_REF }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+      - name: Save image for later jobs
+        run: docker save "$IMAGE_REF" -o image.tar
+      - uses: actions/upload-artifact@v7
+        with:
+          name: docker-image
+          path: image.tar
+          retention-days: 1
+
+  # 6. Security gate: only reached when every scan above passed
+  security-gate:
+    name: Security gate
+    needs: [build-test, sast, sca, secret-scan, image-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All checks passed
+        run: |
+          {
+            echo "## Security gate passed"
+            echo "| Check | Result |"
+            echo "|---|---|"
+            echo "| Unit tests | ${{ needs.build-test.result }} |"
+            echo "| SAST (Bandit) | ${{ needs.sast.result }} |"
+            echo "| SCA (pip-audit) | ${{ needs.sca.result }} |"
+            echo "| Secret scan (Gitleaks) | ${{ needs.secret-scan.result }} |"
+            echo "| Image scan (Trivy) | ${{ needs.image-scan.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # 7. Push the approved image to the container registry
+  push-image:
+    name: Push image to GHCR
+    needs: security-gate
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: docker-image
+      - name: Load and push
+        run: |
+          docker load -i image.tar
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          REMOTE="ghcr.io/$OWNER/$IMAGE_NAME"
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag "$IMAGE_NAME:${GITHUB_SHA::7}" "$REMOTE:${GITHUB_SHA::7}"
+          docker push "$REMOTE:${GITHUB_SHA::7}"
+
+  # 8. Deploy to Kubernetes
+  deploy:
+    name: Deploy to Kubernetes (kind)
+    needs: push-image
+    runs-on: ubuntu-latest
+    environment: kind-demo
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: docker-image
+      - name: Load image
+        run: docker load -i image.tar
+      - name: Create kind cluster
+        uses: helm/kind-action@v1.15.1
+        with:
+          cluster_name: devsecops
+      - name: Load image into the cluster
+        run: kind load docker-image "$IMAGE_NAME:${GITHUB_SHA::7}" --name devsecops
+      - name: Deploy
+        run: |
+          kubectl apply -f "$K8S_DIR/namespace.yaml"
+          sed "s/IMAGE_TAG/${GITHUB_SHA::7}/g" "$K8S_DIR/deployment.yaml" | kubectl apply -f -
+          kubectl apply -f "$K8S_DIR/service.yaml"
+          kubectl -n devsecops-demo rollout status deployment/secure-api --timeout=120s
+          kubectl -n devsecops-demo get pods,svc -o wide
+      - name: Verify
+        run: |
+          kubectl -n devsecops-demo port-forward svc/secure-api 8080:80 &
+          sleep 5
+          curl --fail --silent http://localhost:8080/
+          curl --fail --silent http://localhost:8080/health

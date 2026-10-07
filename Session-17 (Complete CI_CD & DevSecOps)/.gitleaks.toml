@@ -1,0 +1,3 @@
+# Use gitleaks' built-in rule set for this session folder
+[extend]
+useDefault = true
