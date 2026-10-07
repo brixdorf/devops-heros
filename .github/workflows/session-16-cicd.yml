@@ -1,0 +1,142 @@
+name: Session 16 CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Session-16 (CI_CD & GitHub Actions)/**"
+      - ".github/workflows/session-16-cicd.yml"
+  pull_request:
+    paths:
+      - "Session-16 (CI_CD & GitHub Actions)/**"
+  workflow_dispatch:
+
+env:
+  APP_DIR: "Session-16 (CI_CD & GitHub Actions)/app"
+  K8S_DIR: "Session-16 (CI_CD & GitHub Actions)/k8s"
+  IMAGE_NAME: tasks-api
+
+jobs:
+  # CI part 1: check the code
+  test:
+    name: Lint and unit test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: "Session-16 (CI_CD & GitHub Actions)/app"
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint with flake8
+        run: flake8 .
+
+      - name: Run unit tests
+        run: pytest -v --junitxml=test-results.xml
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: ${{ env.APP_DIR }}/test-results.xml
+
+  # CI part 2: build the image, smoke test it, publish it
+  build:
+    name: Build and publish image
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            -t "$IMAGE_NAME:${GITHUB_SHA::7}" "$APP_DIR"
+
+      - name: Smoke test the container
+        run: |
+          docker run -d --name smoke -p 5000:5000 "$IMAGE_NAME:${GITHUB_SHA::7}"
+          sleep 5
+          curl --fail --silent http://localhost:5000/health
+          docker rm -f smoke
+
+      - name: Push to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          REMOTE="ghcr.io/$OWNER/$IMAGE_NAME"
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag "$IMAGE_NAME:${GITHUB_SHA::7}" "$REMOTE:${GITHUB_SHA::7}"
+          docker tag "$IMAGE_NAME:${GITHUB_SHA::7}" "$REMOTE:latest"
+          docker push "$REMOTE:${GITHUB_SHA::7}"
+          docker push "$REMOTE:latest"
+
+      - name: Save image for the deploy job
+        run: docker save "$IMAGE_NAME:${GITHUB_SHA::7}" -o image.tar
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: docker-image
+          path: image.tar
+          retention-days: 1
+
+  # CD: deploy the exact image that passed CI to a Kubernetes cluster
+  deploy:
+    name: Deploy to Kubernetes (kind)
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: kind-demo
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Download image artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: docker-image
+
+      - name: Load image into Docker
+        run: docker load -i image.tar
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1.15.1
+        with:
+          cluster_name: demo
+
+      - name: Load image into the cluster
+        run: kind load docker-image "$IMAGE_NAME:${GITHUB_SHA::7}" --name demo
+
+      - name: Create Kubernetes secret from a GitHub secret
+        env:
+          APP_GREETING: ${{ secrets.APP_GREETING || 'Hello from GitHub Actions' }}
+        run: kubectl create secret generic tasks-api-secrets --from-literal=APP_GREETING="$APP_GREETING"
+
+      - name: Deploy manifests
+        run: |
+          sed "s/IMAGE_TAG/${GITHUB_SHA::7}/g" "$K8S_DIR/deployment.yaml" | kubectl apply -f -
+          kubectl apply -f "$K8S_DIR/service.yaml"
+          kubectl rollout status deployment/tasks-api --timeout=120s
+          kubectl get pods,svc -o wide
+
+      - name: Verify the deployment
+        run: |
+          kubectl port-forward svc/tasks-api 8080:80 &
+          sleep 5
+          curl --fail --silent http://localhost:8080/
+          curl --fail --silent http://localhost:8080/health
