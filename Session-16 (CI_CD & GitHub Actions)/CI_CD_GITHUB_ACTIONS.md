@@ -36,7 +36,7 @@ The workflow file has to live in `.github/workflows/` at the root of the reposit
 
 **Runners.** The machines that execute jobs. `runs-on: ubuntu-latest` uses a fresh GitHub-hosted Ubuntu VM for every job, which is thrown away afterwards.
 
-**Secrets.** Encrypted values stored in the repo settings and injected at runtime, always masked as `***` in logs. The pipeline uses `GITHUB_TOKEN` (created automatically for every run) to log in to GitHub Container Registry, and a repository secret `APP_GREETING` that becomes a Kubernetes Secret and then an env variable inside the app.
+**Secrets.** Encrypted values stored in the repo settings and injected at runtime, always masked as `***` in logs. The pipeline uses `GITHUB_TOKEN` (created automatically for every run) to log in to GitHub Container Registry, and an optional repository secret `APP_GREETING` (with a default when it is not set) that becomes a Kubernetes Secret and then an env variable inside the app.
 
 **Artifacts.** Files saved from a job so they can be downloaded later or used by another job. This pipeline uploads `test-results.xml` (the test report) and `image.tar` (the built image), which the deploy job downloads so it deploys exactly the image that passed CI.
 
@@ -65,24 +65,24 @@ flake8 printed nothing, which means no style problems. All 4 tests passed, the i
 
 ## Pipeline Execution on GitHub
 
-Added the repository secret `APP_GREETING` under Settings, Secrets and variables, Actions, then pushed to `main`.
+Pushed to `main`, and the push started the workflow on its own. I did not add the optional repository secret `APP_GREETING`, so the deploy job used the default greeting built into the workflow (`Hello from GitHub Actions`).
 
-All 3 jobs passed, chained by `needs:`.
+All 3 jobs passed in 2m 36s, chained by `needs:`.
 
 ![](image2.png)
 
-Unit test step output from the `Lint and unit test` job.
+The `Lint and unit test` job, with every step green including `Lint with flake8` and `Run unit tests`. GitHub only shows the log text to signed-in users, so this screenshot of the public page shows the step list and not the pytest output.
 
 ![](image3.png)
 
-`test-results` and `docker-image` artifacts attached to the run.
+`docker-image` (47.4 MB) and `test-results` artifacts attached to the run.
 
 ![](image4.png)
 
-Deploy job: rollout finished on the kind cluster, and the API answered with the greeting from the secret.
+Deploy job, every step green. `Deploy manifests` only passes when `kubectl rollout status` finishes on the kind cluster, and `Verify the deployment` only passes when curl gets an answer from `/` and `/health`.
 
 ![](image5.png)
 
-The published image in GitHub Container Registry (repo page, Packages).
+The published image in GitHub Container Registry, tagged `latest` and `2a8bf91` (the commit that was built).
 
 ![](image6.png)
