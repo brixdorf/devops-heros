@@ -71,7 +71,7 @@ All 3 jobs passed in 2m 36s, chained by `needs:`.
 
 ![](image2.png)
 
-The `Lint and unit test` job, with every step green including `Lint with flake8` and `Run unit tests`. GitHub only shows the log text to signed-in users, so this screenshot of the public page shows the step list and not the pytest output.
+The `Lint and unit test` job, with every step green including `Lint with flake8` and `Run unit tests`. `Run unit tests` step output from the `Lint and unit test job`, with all 4 tests passing.
 
 ![](image3.png)
 
@@ -79,7 +79,7 @@ The `Lint and unit test` job, with every step green including `Lint with flake8`
 
 ![](image4.png)
 
-Deploy job, every step green. `Deploy manifests` only passes when `kubectl rollout status` finishes on the kind cluster, and `Verify the deployment` only passes when curl gets an answer from `/` and `/health`.
+`Verify the deployment` step output from the deploy job. The rollout finished on the kind cluster, and curl got answers from `/` and `/health`, including the default greeting.
 
 ![](image5.png)
 

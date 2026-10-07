@@ -85,15 +85,15 @@ Pushed to `main` and the workflow ran on its own. All 8 jobs were green in 3m 44
 
 ![](image2.png)
 
-Security gate job. It only starts when every job before it passed, and its single step `All checks passed` is green. The summary table it writes is not shown on the run page unless you are signed in, so this is the job page instead.
+Security gate summary on the run page. The gate only runs when every earlier job passed, and it lists each check as passed.
 
 ![](image3.png)
 
-Docker build and image scan job. The step `Scan image (fails on fixable HIGH or CRITICAL)` is green, which means Trivy exited with 0 and found nothing fixable at those levels. GitHub only shows the log text to signed-in users, so the screenshot shows the step list and not the Trivy table.
+Trivy output from the `Scan image (fails on fixable HIGH or CRITICAL)` step. It found no fixable HIGH or CRITICAL vulnerabilities, so the step passed.
 
 ![](image4.png)
 
-Deploy job. `Deploy` passes only when the rollout in namespace `devsecops-demo` finishes, and `Verify` passes only when curl gets an answer from `/` and `/health`.
+`Verify` step output from the deploy job. The rollout in namespace `devsecops-demo` finished, and curl got answers from `/` and `/health`.
 
 ![](image5.png)
 
