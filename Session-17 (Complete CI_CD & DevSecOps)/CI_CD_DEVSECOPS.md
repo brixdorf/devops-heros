@@ -81,24 +81,34 @@ flake8 was silent, all 4 tests passed, Bandit reported `No issues identified` ov
 
 ## Successful Pipeline Execution
 
-All 8 jobs green, with the scans running in parallel.
+Pushed to `main` and the workflow ran on its own. All 8 jobs were green in 3m 44s, with SAST, SCA and the secret scan running in parallel after the tests.
 
 ![](image2.png)
 
-Security gate summary on the run page.
+Security gate job. It only starts when every job before it passed, and its single step `All checks passed` is green. The summary table it writes is not shown on the run page unless you are signed in, so this is the job page instead.
 
 ![](image3.png)
 
-Trivy image scan step output, with no fixable HIGH or CRITICAL findings.
+Docker build and image scan job. The step `Scan image (fails on fixable HIGH or CRITICAL)` is green, which means Trivy exited with 0 and found nothing fixable at those levels. GitHub only shows the log text to signed-in users, so the screenshot shows the step list and not the Trivy table.
 
 ![](image4.png)
 
-Deploy job: rollout complete in namespace `devsecops-demo`, and the API answered.
+Deploy job. `Deploy` passes only when the rollout in namespace `devsecops-demo` finishes, and `Verify` passes only when curl gets an answer from `/` and `/health`.
 
 ![](image5.png)
 
 ## Proving the Gate Blocks Bad Code
 
-Opened a pull request that pinned `flask==3.1.2` again. The SCA job failed with the advisory, and image scan, security gate, push and deploy were all skipped.
+I did not open a pull request for this part. Instead I reproduced the failure locally with the same command the SCA job runs, against a copy of `requirements.txt` that pins `flask==3.1.2` again:
+
+```bash
+cd app && source .venv/bin/activate
+sed 's/flask==3.1.3/flask==3.1.2/' requirements.txt > requirements-old.txt
+cat requirements-old.txt
+pip-audit -r requirements-old.txt; echo "exit code: $?"
+rm requirements-old.txt
+```
+
+pip-audit found the advisory PYSEC-2026-2151 in flask 3.1.2 (fixed in 3.1.3) and exited with code 1. In the pipeline a non-zero exit fails the SCA job, and because image scan, security gate, push and deploy are all chained to it through `needs:`, none of them would run.
 
 ![](image6.png)
