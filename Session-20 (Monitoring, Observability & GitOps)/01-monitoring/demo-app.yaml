@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring-demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: monitoring-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+---
+# Burns CPU on purpose so the HighPodCPU alert fires
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cpu-burner
+  namespace: monitoring-demo
+  labels:
+    app: cpu-burner
+spec:
+  containers:
+    - name: burner
+      image: busybox:1.36
+      command: ["/bin/sh", "-c", "while true; do :; done"]
+      resources:
+        requests:
+          cpu: 100m
+          memory: 16Mi
+        limits:
+          cpu: 300m
+          memory: 32Mi

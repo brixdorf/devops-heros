@@ -1,0 +1,26 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: demo-alerts
+  namespace: monitoring
+  labels:
+    # kube-prometheus-stack only loads rules carrying its release label
+    release: monitoring
+spec:
+  groups:
+    - name: monitoring-demo
+      rules:
+        - alert: HighPodCPU
+          expr: sum by (pod) (rate(container_cpu_usage_seconds_total{namespace="monitoring-demo", container!=""}[2m])) > 0.2
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Pod {{ $labels.pod }} is using more than 0.2 CPU cores"
+        - alert: PodNotReady
+          expr: sum by (pod) (kube_pod_status_ready{namespace="monitoring-demo", condition="false"}) > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Pod {{ $labels.pod }} has not been ready for 1 minute"
