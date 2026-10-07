@@ -1,0 +1,4 @@
+{{ .Values.site.title }} {{ .Values.site.version }} is deployed as release "{{ .Release.Name }}" (revision {{ .Release.Revision }}).
+
+Open it with:
+  minikube service {{ include "bookshelf.fullname" . }} --url

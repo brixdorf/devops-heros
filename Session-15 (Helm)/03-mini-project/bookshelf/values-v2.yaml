@@ -1,0 +1,5 @@
+replicaCount: 3
+site:
+  version: "v2"
+  message: "Release two, now with three replicas."
+  color: "#2f855a"

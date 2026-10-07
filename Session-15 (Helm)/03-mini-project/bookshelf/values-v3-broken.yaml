@@ -1,0 +1,6 @@
+image:
+  tag: "1.27-alpine-typo"
+site:
+  version: "v3"
+  message: "Release three, this one ships a bad image tag."
+  color: "#c53030"

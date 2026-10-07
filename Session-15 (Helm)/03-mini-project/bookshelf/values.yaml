@@ -1,0 +1,27 @@
+# Number of nginx pods
+replicaCount: 2
+
+image:
+  repository: nginx
+  tag: "1.27-alpine"
+  pullPolicy: IfNotPresent
+
+# Content shown on the web page
+site:
+  title: "Bookshelf"
+  version: "v1"
+  message: "Welcome to the bookshelf, release one."
+  color: "#2b6cb0"
+
+service:
+  type: NodePort
+  port: 80
+  nodePort: 30015
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
